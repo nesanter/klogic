@@ -1,6 +1,8 @@
 import std.stdio;
 import std.conv;
 
+immutable string VERSION = "1.0";
+
 void main(string[] args) {
     if (args.length == 1) {
         writeln("Syntax: logic files...");
@@ -456,6 +458,21 @@ class LogicMaster {
                             }
                         }
                     }
+                break;
+                case "help":
+                    writeln("valid commands:");
+                    writeln("help -- show this message");
+                    writeln("quit -- exits");
+                    writeln("show -- show the parsed logic data");
+                    writeln("");
+                    writeln("run [max] -- runs the simulation until either stable or max rounds have passed");
+                    writeln("reset -- reset the simulation");
+                    writeln("view -- view current component (initially root)");
+                    writeln("zoom -- descend into sub-component");
+                    writeln("up -- ascend into parent component");
+                    writeln("poke [pin] [status] -- examine and change status of input pins");
+                    writeln("");
+                    writeln("version ",VERSION);
                 break;
                 case "":
                 break;
