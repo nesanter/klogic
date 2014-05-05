@@ -373,17 +373,23 @@ class LogicMaster {
                 case "run":
                     ulong sims;
                     if (commands.length == 1)
-                        sims = 0;
+                        sims = 1000;
                     else {
                         try {
                             sims = to!ulong(commands[1]);
+                            if (sims > 0)
+                                sims++;
                         } catch (ConvException ce) {
-                            writeln("Syntax: run [trials]");
+                            writeln("Syntax: run [trials=1000]");
                             break;
                         }
                     }
-                    ulong runs = simulate(sims);
-                    writeln("simulation stable after ",runs," rounds");
+                    bool stable;
+                    ulong runs = simulate(sims, stable);
+                    if (stable)
+                        writeln("simulation stable after ",runs," rounds");
+                    else
+                        writeln("simulation ended after ",runs," rounds");
                 break;
                 case "show":
                     if (commands.length == 1 || commands[1] == "components") {
@@ -458,8 +464,6 @@ class LogicMaster {
                         }
                         pnum--;
                         
-                        writeln(pnum);
-                        
                         if (commands.length == 2) {
                             writeln(views[$-1].component_in[pnum]);
                         } else {
@@ -512,9 +516,13 @@ class LogicMaster {
     }
     
     //----simulation----//
-    ulong simulate(ulong sims) {
+    ulong simulate(ulong sims, out bool stable) {
         ulong i = 0;
-        while (step() && (sims == 0 || sims-- > 1)) {
+        while ((sims == 0 || sims-- > 1)) {
+            if (!step()) {
+                stable = true;
+                break;
+            }
             i++;
         }
         return i;
@@ -747,11 +755,11 @@ class PortInstance {
                                
                                [Status.E, Status.X] : Status.E,
                                [Status.E, Status.E] : Status.E,
-                               [Status.E, Status.L] : Status.E,
+                               [Status.E, Status.L] : Status.L,
                                [Status.E, Status.H] : Status.E,
                                
                                [Status.L, Status.X] : Status.L,
-                               [Status.L, Status.E] : Status.E,
+                               [Status.L, Status.E] : Status.L,
                                [Status.L, Status.L] : Status.L,
                                [Status.L, Status.H] : Status.L,
                                
@@ -768,7 +776,7 @@ class PortInstance {
                                [Status.E, Status.X] : Status.E,
                                [Status.E, Status.E] : Status.E,
                                [Status.E, Status.L] : Status.E,
-                               [Status.E, Status.H] : Status.E,
+                               [Status.E, Status.H] : Status.H,
                                
                                [Status.L, Status.X] : Status.E,
                                [Status.L, Status.E] : Status.E,
@@ -776,7 +784,7 @@ class PortInstance {
                                [Status.L, Status.H] : Status.H,
                                
                                [Status.H, Status.X] : Status.H,
-                               [Status.H, Status.E] : Status.E,
+                               [Status.H, Status.E] : Status.H,
                                [Status.H, Status.L] : Status.H,
                                [Status.H, Status.H] : Status.H ],
                                
@@ -807,11 +815,11 @@ class PortInstance {
                                
                                [Status.E, Status.X] : Status.E,
                                [Status.E, Status.E] : Status.E,
-                               [Status.E, Status.L] : Status.E,
+                               [Status.E, Status.L] : Status.H,
                                [Status.E, Status.H] : Status.E,
                                
                                [Status.L, Status.X] : Status.H,
-                               [Status.L, Status.E] : Status.E,
+                               [Status.L, Status.E] : Status.H,
                                [Status.L, Status.L] : Status.H,
                                [Status.L, Status.H] : Status.H,
                                
@@ -828,7 +836,7 @@ class PortInstance {
                                [Status.E, Status.X] : Status.E,
                                [Status.E, Status.E] : Status.E,
                                [Status.E, Status.L] : Status.E,
-                               [Status.E, Status.H] : Status.E,
+                               [Status.E, Status.H] : Status.L,
                                
                                [Status.L, Status.X] : Status.E,
                                [Status.L, Status.E] : Status.E,
@@ -836,7 +844,7 @@ class PortInstance {
                                [Status.L, Status.H] : Status.L,
                                
                                [Status.H, Status.X] : Status.L,
-                               [Status.H, Status.E] : Status.E,
+                               [Status.H, Status.E] : Status.L,
                                [Status.H, Status.L] : Status.L,
                                [Status.H, Status.H] : Status.L ],
                                
