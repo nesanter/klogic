@@ -25,4 +25,8 @@ component add3 {
 	+ a2, b2, x1 [add1] c2, c3;
 }
 
+/*
+    this is a comment
+*/
+
 root add3;

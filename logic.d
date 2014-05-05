@@ -278,18 +278,46 @@ class LogicMaster {
         string[] tokens;
         string t;
         bool keep;
+        bool comment_trans;
+        ulong comment_on;
         foreach (line; f.byLine) {
             foreach (ch; line) {
-                if (is_token_seperator(ch, keep)) {
-                    if (t.length > 0) {
-                        tokens ~= t;
-                        t = "";
+                if (ch == '/') {
+                    if (comment_on > 0 && comment_trans) {
+                        comment_on--;
+                        comment_trans = false;
+                        continue;
+                    } else {
+                        comment_trans = true;
                     }
-                    if (keep) {
-                        tokens ~= [ch];
+                } else if (ch == '*') {
+                    if (comment_on > 0) {
+                        comment_trans = true;
+                    } else if (comment_trans) {
+                        comment_on++;
+                        if (t.length > 0) {
+                            if (t[$-1] == '/') {
+                                if (t.length > 2)
+                                    tokens ~= t[0..$-1];
+                            } else {
+                                tokens ~= t;
+                            }
+                            t = "";
+                        }
                     }
-                } else {
-                    t ~= ch;
+                }
+                if (comment_on == 0) {
+                    if (is_token_seperator(ch, keep)) {
+                        if (t.length > 0) {
+                            tokens ~= t;
+                            t = "";
+                        }
+                        if (keep) {
+                            tokens ~= [ch];
+                        }
+                    } else {
+                        t ~= ch;
+                    }
                 }
             }
         }
