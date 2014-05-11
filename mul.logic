@@ -16,6 +16,24 @@ component hadd1 {
 	+ a, b [&] c_out;
 }
 
+component addsub4 {
+    < a@4, b@4, sub;
+    > q@4, carry;
+    . b2@4, x@4;
+    
+    + b.0, sub [^] b2.0;
+    + b.1, sub [^] b2.1;
+    + b.2, sub [^] b2.2;
+    + b.3, sub [^] b2.3;
+    
+    + a.0, b2.0, sub [add1] q.0, x.0;
+    + a.1, b2.1, x.0 [add1] q.1, x.1;
+    + a.2, b2.2, x.1 [add1] q.2, x.2;
+    + a.3, b2.3, x.2 [add1] q.3, x.3;
+    
+    + x.3, sub [^] carry;
+}
+
 component mul4 {
     < a@4, b@4;
     > q@8;
@@ -103,4 +121,4 @@ component mul4 {
     + e128a, x3 [hadd1] q.7, _;
 }
 
-root mul4;
+/*root mul4;*/

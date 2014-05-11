@@ -1,6 +1,8 @@
 import std.stdio;
 import std.conv;
 
+import speccomp, driver;
+
 immutable string VERSION = "1.0";
 
 void main(string[] args) {
@@ -35,7 +37,7 @@ void main(string[] args) {
     
     m.initial_commands();
     
-    m.prompt();
+    m.launch!(Prompt)();
 
     
 }
@@ -52,6 +54,7 @@ class LogicMaster {
     static bool[char] seperators;
     static Gate[string] gate_names;
     static Status[string] constant_ports;
+    static SpecialComponent function(string[]) [string] special_names;
     
     string[][] commands;
     
@@ -64,11 +67,15 @@ class LogicMaster {
             "-":Gate.NONE, "!":Gate.NOT,
             "&":Gate.AND, "|":Gate.OR, "^":Gate.XOR,
             "!&":Gate.NAND, "!|":Gate.NOR, "!^":Gate.XNOR,
-            "T":Gate.NTRN, "PT":Gate.PTRN, "NT":Gate.NTRN
+            "*":Gate.NTRN, "*P":Gate.PTRN, "*N":Gate.NTRN,
+            "-L":Gate.PL, "-H":Gate.PH,
         ];
         constant_ports = [
             "_X":Status.X, "_E":Status.E,
             "_L":Status.L, "_H":Status.H
+        ];
+        special_names = [
+            "%mem":&SCMemory.create
         ];
     }
     
@@ -194,7 +201,6 @@ class LogicMaster {
         
         foreach (p; c.inputs)
             p.is_input = true;
-        
         c.simplify();
         
         return tokens[1..$];
@@ -263,10 +269,12 @@ class LogicMaster {
         Gate gate;
         Component sub;
         
+        SpecialComponent special;
+        
         Port[] inputs, outputs;
         
         Status[ulong] constants;
-        ulong[] ignores;
+        bool[ulong] ignores;
         
         ulong i = 0;
         
@@ -286,6 +294,20 @@ class LogicMaster {
                 } else if (tokens[i+1] in components) {
                     gate = Gate.SUB;
                     sub = components[tokens[i+1]];
+                } else if (tokens[i+1] in special_names) {
+                    gate = Gate.SPC;
+                    
+                    string sname = tokens[i+1];
+                    
+                    string[] args;
+                    for (; tokens[i+2] != "]"; i++) {
+                        if (i+2 == tokens.length)
+                            throw new LoadingException("missing ] after gate in component "~c.name);
+                        args ~= tokens[i+2];
+                    }
+                    
+                    special = special_names[sname](args);
+                    
                 } else {
                     throw new LoadingException("unknown gate "~tokens[i+1]~" in component "~c.name);
                 }
@@ -303,10 +325,10 @@ class LogicMaster {
                 } else {
                     inputs ~= c.ports[tokens[i]];
                 }
-            } else if (tokens[i] in constant_ports) {
+            } else if (!after && tokens[i] in constant_ports) {
                 constants[inputs.length+constants.length] = constant_ports[tokens[i]];
             } else if (after && tokens[i] == "_") {
-                ignores ~= outputs.length + ignores.length;
+                ignores[outputs.length+ignores.length] = true;
             } else if (tokens[i] in c.groups) {
                 if (after) {
                     outputs ~= c.groups[tokens[i]];
@@ -327,12 +349,16 @@ class LogicMaster {
         
         g.gate = gate;
         g.sub = sub;
+        g.special = special;
         
         g.constant_inputs = constants;
         
         if (g.gate == Gate.SUB) {
             if (outputs.length+ignores.length != sub.outputs.length)
                 throw new LoadingException("incorrect number of outputs for instance of component "~sub.name~" in component "~c.name);
+        } else if (g.gate == Gate.SPC) {
+            if (outputs.length+ignores.length != special.num_outputs)
+                throw new LoadingException("incorrect number of outputs for instance of special component "~special.name~" in component "~c.name);
         } else if (outputs.length > 1) {
             throw new LoadingException("too many outputs for gate "~to!string(gate)~" in component "~c.name);
         }
@@ -340,10 +366,30 @@ class LogicMaster {
         if (g.gate == Gate.SUB) {
             if (inputs.length+constants.length != sub.inputs.length)
                 throw new LoadingException("incorrect number of inputs for instance of component "~sub.name~" in component "~c.name);
+        } else if (g.gate == Gate.SPC) {
+            if (inputs.length+constants.length != special.num_inputs)
+                throw new LoadingException("incorrect number of inputs for instance of special component "~special.name~" in component "~c.name);
         } else if (inputs.length + constants.length != gate_inputs(g.gate)) {
             throw new LoadingException("incorrect number of inputs for gate "~to!string(g.gate)~" in component "~c.name);
         }
+        ulong p;
+        foreach (j; 0 .. outputs.length + ignores.length) {
+            if (j in ignores) {
+                g.outputs ~= Connection(null);
+            } else {
+                g.outputs ~= Connection(outputs[p++], j, 0);
+            }
+        }
         
+        p = 0;
+        foreach (j; 0 .. inputs.length + constants.length) {
+            if (j in constants) {
+                continue;
+            } else {
+                inputs[p++].outputs ~= Connection(g, 0, j);
+            }
+        }
+        /*
         foreach (j,p; outputs) {
             if (ignores.length > 0 && ignores[0] == j) {
                 g.outputs ~= Connection(null);
@@ -360,6 +406,7 @@ class LogicMaster {
         foreach (j,p; inputs) {
             p.outputs ~= Connection(g,0,j);
         }
+        */
         
         c.ports[g.name] = g;
         
@@ -437,8 +484,8 @@ class LogicMaster {
         return false;
     }
     
-    ulong gate_inputs(Gate g) {
-        if (g == Gate.NONE || g == Gate.NOT)
+    static ulong gate_inputs(Gate g) {
+        if (g == Gate.NONE || g == Gate.NOT || g == Gate.PL || g == Gate.PH)
             return 1;
         return 2;
     }
@@ -451,284 +498,22 @@ class LogicMaster {
     //----interactive prompt----//
     
     void initial_commands() {
-        ComponentInstance[] views = [root_instance];
+        Prompt.reset(this);
         foreach (cmd; commands) {
-            run_command(cmd, views);
+            Prompt.run_command(cmd);
         }
     }
     
-    void prompt() {
-        
-        ComponentInstance[] views = [root_instance];
-        bool run = true;
-        while (run) {
-            write(">");
-            string raw = readln();
-            string[] commands = [""];
-            foreach (ch; raw) {
-                if (ch == '\n')
-                    break;
-                if (ch == ' ')
-                    commands ~= [""];
-                else
-                    commands[$-1] ~= ch;
-            }
-            
-            if (commands.length == 0)
-                continue;
-            
-            if (run_command(commands, views))
-                run = false;
-        }
-    }
-    
-    bool run_command(string[] commands, ref ComponentInstance[] views) {
-        switch (commands[0]) {
-            case "quit":
-                return true;
-            break;
-            case "run":
-                ulong sims;
-                if (commands.length == 1)
-                    sims = 1000;
-                else {
-                    try {
-                        sims = to!ulong(commands[1]);
-                        if (sims > 0)
-                            sims++;
-                    } catch (ConvException ce) {
-                        writeln("Syntax: run [trials=1000]");
-                        break;
-                    }
-                }
-                bool stable;
-                ulong runs = simulate(sims, stable);
-                if (stable)
-                    writeln("simulation stable after ",runs," rounds");
-                else
-                    writeln("simulation ended after ",runs," rounds");
-            break;
-            case "show":
-                if (commands.length == 1 || commands[1] == "components") {
-                    foreach (c; components) {
-                        c.print();
-                    }
-                } else {
-                    switch (commands[1]) {
-                        case "root":
-                            root.print();
-                        break;
-                        case "globals":
-                            foreach (pin; root.inputs) {
-                                writeln(pin);
-                            }
-                        break;
-                        default:
-                            writeln("Syntax: show [components|root]");
-                        break;
-                    }
-                }
-            break;
-            case "reset":
-                root_instance.reset();
-            break;
-            case "view":
-                views[$-1].view();
-            break;
-            case "zoom":
-                if (commands.length == 1) {
-                    foreach (p; views[$-1].type.ports) {
-                        if (p.gate == Gate.SUB) {
-                            writeln(p.name, " (", p.sub.name, ")");
-                        }
-                    }
-                } else {
-                    bool fail = true;
-                    foreach (p; views[$-1].children) {
-                        if (p.type.gate == Gate.SUB && p.type.name == commands[1]) {
-                            views ~= p.sub_instance;
-                            p.sub_instance.view();
-                            fail = false;
-                            break;
-                        }
-                    }
-                    if (fail)
-                        writeln("no such subcomponent");
-                }
-            break;
-            case "up":
-                if (views.length > 1)
-                    views = views[0..$-1];
-                else
-                    writeln("already at root");
-            break;
-            case "poke":
-                if (commands.length == 1) {
-                    views[$-1].view_io();
-                } else {
-                    
-                    if (commands[1] !in views[$-1].children || !views[$-1].children[commands[1]].type.is_input) {
-                        writeln("no such input pin");
-                        break;
-                    }
-                    
-                    ulong pnum = views[$-1].children[commands[1]].type.num;
-                    
-                    if (commands.length == 2) {
-                        writeln(views[$-1].component_in[pnum]);
-                    } else {
-                        switch (commands[2]) {
-                            case "h":
-                            case "H":
-                                views[$-1].component_in[pnum] = Status.H;
-                            break;
-                            case "l":
-                            case "L":
-                                views[$-1].component_in[pnum] = Status.L;
-                            break;
-                            case "x":
-                            case "X":
-                                views[$-1].component_in[pnum] = Status.X;
-                            break;
-                            case "e":
-                            case "E":
-                                views[$-1].component_in[pnum] = Status.E;
-                            break;
-                            default:
-                                writeln("no such status");
-                            break; 
-                        }
-                    }
-                }
-            break;
-            case "set":
-                if (commands.length == 1) {
-                    if (views[$-1].type.groups.length > 0) {
-                        foreach (name,g; views[$-1].type.groups) {
-                            if (g[0].is_input)
-                                write("  < ",name, ": ");
-                            else
-                                write("  > ",name, ": ");
-                            foreach (p; g) {
-                                if (p.is_input) {
-                                    write(views[$-1].component_in[p.num]);
-                                } else {
-                                    write(views[$-1].component_out[p.num]);
-                                }
-                            }
-                            writeln();
-                        }
-                    } else {
-                        writeln("(no groups defined)");
-                    }
-                } else if (commands.length == 2) {
-                    if (commands[1] in views[$-1].type.groups) {
-                        bool e, x;
-                        ulong n;
-                        if (views[$-1].type.groups[commands[1]][0].is_input) {
-                            foreach_reverse (p; views[$-1].type.groups[commands[1]]) {
-                                final switch (views[$-1].component_in[p.num]) {
-                                    case Status.X:
-                                        x = true;
-                                    break;
-                                    case Status.E:
-                                        e = true;
-                                    break;
-                                    case Status.L:
-                                        n <<= 1;
-                                    break;
-                                    case Status.H:
-                                        n = (n << 1) | 1;
-                                    break;
-                                }
-                            }
-                        } else {
-                            foreach_reverse (p; views[$-1].type.groups[commands[1]]) {
-                                final switch (views[$-1].component_out[p.num]) {
-                                    case Status.X:
-                                        x = true;
-                                    break;
-                                    case Status.E:
-                                        e = true;
-                                    break;
-                                    case Status.L:
-                                        n <<= 1;
-                                    break;
-                                    case Status.H:
-                                        n = (n << 1) | 1;
-                                    break;
-                                }
-                            }
-                        }
-                        if (e)
-                            writeln("(error)");
-                        else if (x)
-                            writeln("(undefined)");
-                        else
-                            writeln(n);
-                    } else {
-                        writeln("no such group");
-                    }
-                } else {
-                    ulong n;
-                    try {
-                        n = to!ulong(commands[2]);
-                    } catch (ConvException ce) {
-                        writeln("second argument must be unsigned integer");
-                        break;
-                    }
-                    if (n > (1 << views[$-1].type.groups[commands[1]].length)-1) {
-                        writeln("second argument exceeds width of group");
-                        break;
-                    }
-                    foreach (p; views[$-1].type.groups[commands[1]]) {
-                        if (p.is_input) {
-                            if (n & 1) {
-                                views[$-1].component_in[p.num] = Status.H;
-                            } else {
-                                views[$-1].component_in[p.num] = Status.L;
-                            }
-                        } else {
-                            if (n & 1) {
-                                views[$-1].component_out[p.num] = Status.H;
-                            } else {
-                                views[$-1].component_out[p.num] = Status.L;
-                            }
-                        }
-                        n >>= 1;
-                    }
-                }
-            break;
-            case "help":
-                writeln("valid commands:");
-                writeln("help -- show this message");
-                writeln("quit -- exits");
-                writeln("show -- show the parsed logic data");
-                writeln("");
-                writeln("run [max] -- runs the simulation until either stable or max rounds have passed");
-                writeln("reset -- reset the simulation");
-                writeln("view -- view current component (initially root)");
-                writeln("zoom -- descend into sub-component");
-                writeln("up -- ascend into parent component");
-                writeln("poke [pin] [status] -- examine and change status of input pins");
-                writeln("set [group] [value] -- examine and change status of pin groups");
-                writeln("");
-                writeln("version ",VERSION);
-            break;
-            case "":
-            break;
-            default:
-                writeln("unknown command");
-            break;
-        }
-        return false;
+    void launch(T : Driver)() {
+        T.reset(this);
+        T.run();
     }
     
     //----simulation----//
-    ulong simulate(ulong sims, out bool stable) {
+    ulong simulate(ComponentInstance main, ulong sims, out bool stable) {
         ulong i = 0;
         while ((sims == 0 || sims-- > 1)) {
-            if (!step()) {
+            if (!step(main)) {
                 stable = true;
                 break;
             }
@@ -737,8 +522,8 @@ class LogicMaster {
         return i;
     }
     
-    bool step() {
-        root_instance.recalculate();
+    bool step(ComponentInstance main) {
+        main.recalculate();
         return root_instance.propogate();
     }
 }
@@ -764,6 +549,10 @@ class Component {
         writeln("  graph:");
         foreach (port; ports) {
             writeln("    ",port," -> ",port.outputs);
+            if (port.constant_inputs.length > 0) {
+                foreach (p,s; port.constant_inputs)
+                writeln("      _",s," -> ",port,"[",p,"]");
+            }
         }
     }
     
@@ -771,6 +560,8 @@ class Component {
         Connection[][Port] inputs;
         foreach (p; ports) {
             foreach (con; p.outputs) {
+                if (con.port is null)
+                    continue;
                 if (con.port in inputs)
                     inputs[con.port] ~= Connection(p, con.source, con.dest);
                 else if (con.port.is_pin && con.port.internal)
@@ -792,6 +583,18 @@ class Component {
                 //remove p from ports
                 ports.remove(n);
             }
+        }
+        
+        foreach (n,g; groups.dup) {
+            bool rem = true;
+            foreach (p; g) {
+                if (p !in inputs) {
+                    rem = false;
+                    break;
+                }
+            }
+            if (rem)
+                groups.remove(n);
         }
         
         foreach (p; ports) {
@@ -820,7 +623,7 @@ class Component {
 }
 
 enum Gate {
-    NONE, NOT, AND, OR, XOR, NAND, NOR, XNOR, PTRN, NTRN, SUB
+    NONE, NOT, AND, OR, XOR, NAND, NOR, XNOR, PTRN, NTRN, SUB, PL, PH, SPC
 }
 
 struct Connection {
@@ -833,6 +636,7 @@ class Port {
     bool is_pin, internal, is_input;
     Gate gate;
     Component sub;
+    SpecialComponent special;
     ulong num;
     
     Status[ulong] constant_inputs;
@@ -853,6 +657,8 @@ class Port {
             return name;
         else if (gate == Gate.SUB)
             return name ~ "_" ~ sub.name;
+        else if (gate == Gate.SPC)
+            return name ~ "_" ~ special.name;
         else
             return name ~ "_" ~ to!string(gate);
     }
@@ -874,7 +680,12 @@ class ComponentInstance {
         foreach (portname; children.keys.sort) {
             PortInstance p = children[portname];
             foreach (con; p.type.outputs) {
-                writeln(p.type, "[",con.source,"] -> ", con.port.name, "[",con.dest,"] := ", p.status_out[con.source]);
+                string name;
+                if (con.port is null)
+                    name = "_";
+                else
+                    name = con.port.name;
+                writeln(p.type, "[",con.source,"] -> ", name, "[",con.dest,"] := ", p.status_out[con.source]);
             }
         }
     }
@@ -928,6 +739,8 @@ class ComponentInstance {
                     change = true;
                 }
             foreach (outp; child.type.outputs) {
+                if (outp.port is null)
+                    continue;
                 if (child.status_out[outp.source] != children[outp.port.name].status_in[outp.dest]) {
                     change = true;
                     children[outp.port.name].status_in[outp.dest] = child.status_out[outp.source];
@@ -1121,7 +934,15 @@ class PortInstance {
                                [Status.H, Status.X] : Status.E,
                                [Status.H, Status.E] : Status.E,
                                [Status.H, Status.L] : Status.X,
-                               [Status.H, Status.H] : Status.H ]
+                               [Status.H, Status.H] : Status.H ],
+                  Gate.PL  : [ [Status.X] : Status.L,
+                               [Status.E] : Status.E,
+                               [Status.L] : Status.L,
+                               [Status.H] : Status.H ],
+                  Gate.PH  : [ [Status.X] : Status.H,
+                               [Status.E] : Status.E,
+                               [Status.L] : Status.L,
+                               [Status.H] : Status.H ]
                  ];
                  
     }
@@ -1137,7 +958,7 @@ class PortInstance {
             foreach (i; 0 .. type.sub.inputs.length)
                 status_in ~= Status.X;
             sub_instance.reset();
-        } else if (type.gate == Gate.NONE || type.gate == Gate.NOT) {
+        } else if (LogicMaster.gate_inputs(type.gate) == 1) {
             status_in = [Status.X];
         } else {
             status_in = [Status.X, Status.X];
@@ -1163,8 +984,19 @@ class PortInstance {
             sub_instance.component_in = status_in;
             sub_instance.recalculate();
             status_out = sub_instance.component_out;
+        } else if (type.gate == Gate.SPC) {
+            status_out = type.special.update(status_in);
         } else {
             status_out[0] = gate_lookup[type.gate].get(status_in,Status.E);
         }
     }
+}
+
+interface SpecialComponent {
+    static SpecialComponent create(string[] args);
+    Status[] update(Status[] input);
+    void reset();
+    @property ulong num_outputs();
+    @property ulong num_inputs();
+    @property string name();
 }
