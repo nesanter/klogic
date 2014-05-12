@@ -358,32 +358,20 @@ class Prompt : Driver {
                 } else if (commands[1] in views[$-1].type.ports) {
                     writeln("cannot create port with duplicate name");
                 } else {
-                    auto p = new Port(commands[1], true, 0);
-                    views[$-1].type.ports[commands[1]] = p;
                     if (commands.length > 2) {
                         if (commands[2] == "input") {
-                            p.num = views[$-1].type.inputs.length;
-                            views[$-1].type.inputs ~= p;
-                            p.is_input = true;
-                            foreach (c; m.components) {
-                                foreach (p; c.ports) {
-                                    if (p.gate == Gate.SUB && p.sub.name == views[$-1].type.name) {
-                                        p.constant_inputs[p.constant_inputs.length+p.outputs.length] = Status.X;
-                                    }
-                                }
-                            }
+                            views[$-1].type.add_ext_port(commands[1], true);
+                            m.update_inputs(views[$-1].type);
                         } else if (commands[2] == "output") {
-                            p.num = views[$-1].type.outputs.length;
-                            views[$-1].type.outputs ~= p;
-                            foreach (c; m.components) {
-                                foreach (p; c.ports) {
-                                    if (p.gate == Gate.SUB && p.sub.name == views[$-1].type.name) {
-                                        p.outputs ~= Connection(null);
-                                    }
-                                }
-                            }
+                            views[$-1].type.add_ext_port(commands[1], false);
+                            m.update_outputs(views[$-1].type);
+                        } else {
+                            writeln("third argument, if present, must be \"input\" or \"output\"");
                         }
+                    } else {
+                        views[$-1].type.add_port(commands[1], true);
                     }
+                    
                     m.instantiate();
                     views = [m.root_instance];
                     foreach (pp; path) {
@@ -397,57 +385,13 @@ class Prompt : Driver {
                 } else if (commands[1] !in views[$-1].type.ports) {
                     writeln("no such port");
                 } else {
-                    Port discard = views[$-1].type.ports[commands[1]];
-                    foreach (p; views[$-1].type.ports) {
-                        Connection[] keep;
-                        foreach (con; p.outputs) {
-                            if (con.port == discard) {
-                                continue;
-                            }
-                            keep ~= con;
-                        }
-                        p.outputs = keep;
-                    }
-                    views[$-1].type.ports.remove(commands[1]);
-                    if (discard.is_pin) {
-                        if (discard.is_input) {
-                            views[$-1].type.inputs = views[$-1].type.inputs[0..discard.num] ~ views[$-1].type.inputs[discard.num..$];
-                            foreach (c; m.components) {
-                                foreach (p; c.ports) {
-                                    ulong ditch;
-                                    foreach (i,outp; p.outputs) {
-                                        if (outp.port.gate == Gate.SUB && outp.port.sub == views[$-1].type && outp.dest == discard.num) {
-                                            ditch = i+1;
-                                            break;
-                                        }
-                                    }
-                                    if (ditch > 0) {
-                                        p.outputs = p.outputs[0..ditch-1] ~ p.outputs[ditch-1..$];
-                                    }
-                                }
-                            }
-                        } else {
-                            views[$-1].type.outputs = views[$-1].type.outputs[0..discard.num] ~ views[$-1].type.inputs[discard.num..$];
-                            foreach (c; m.components) {
-                                foreach (p; c.ports) {
-                                    if (p.gate == Gate.SUB && p.sub == views[$-1].type) {
-                                        ulong ditch;
-                                        foreach (i,outp; p.outputs) {
-                                            if (outp.source == discard.num) {
-                                                ditch = i+1;
-                                                break;
-                                            }
-                                        }
-                                        if (ditch > 0) {
-                                            p.outputs = p.outputs[0..ditch-1] ~ p.outputs[ditch-1..$];
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        
-                    }
-                    
+                    m.remove_port(views[$-1].type, commands[1]);
+					
+					m.instantiate();
+					views = [m.root_instance];
+					foreach (pp; path) {
+						views ~= views[$-1].children[pp.name].sub_instance;
+					}
                 }
             break;
             case "clear":

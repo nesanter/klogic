@@ -50,6 +50,14 @@ class LoadingException : Throwable {
     }
 }
 
+class RuntimeException : Throwable {
+    ulong line;
+    this(string msg, ulong l = __LINE__) {
+        line = l;
+        super(msg);
+    }
+}
+
 class LogicMaster {
     static bool[char] seperators;
     static Gate[string] gate_names;
@@ -526,6 +534,67 @@ class LogicMaster {
         main.recalculate();
         return root_instance.propogate();
     }
+    
+    //----runtime modification----//
+    void update_inputs(Component m) {
+        foreach (c; components) {
+            foreach (p; c.ports) {
+                if (p.gate == Gate.SUB && p.sub == m) {
+                    p.constant_inputs[m.inputs.length-1] = Status.X;
+                }
+            }
+        }
+    }
+    void update_outputs(Component m) {
+        foreach (c; components) {
+            foreach (p; c.ports) {
+                if (p.gate == Gate.SUB && p.sub == m) {
+                    p.outputs ~= Connection(null);
+                }
+            }
+        }
+    }
+	void remove_port(Component m, string name) {
+		Port rp = m.ports[name];
+		
+		m.remove_port(name);
+		
+		if (rp.is_pin) {
+			if (rp.is_input) {
+				foreach (c; components) {
+					if (c == m)
+						continue;
+					foreach (p; c.ports) {
+						if (p.gate == Gate.SUB && p.sub == m) {
+							if (rp.num in p.constant_inputs) {
+								p.constant_inputs.remove(rp.num);
+							}
+						}
+						foreach (con; p.outputs) {
+							if (con.port !is null && con.port.gate == Gate.SUB && con.port.sub == m && con.dest == rp.num) {
+								con.port = null;
+							}
+						}
+					}
+				}
+			} else {
+				foreach (c; components) {
+					if (c == m)
+						continue;
+					foreach (p; c.ports) {
+						if (p.gate == Gate.SUB && p.sub == m) {
+							foreach (n,con; p.outputs.dup) {
+								if (con.source == rp.num) {
+									p.outputs = p.outputs[0..n]~(n+1<p.outputs.length ? p.outputs[n..$] : []);
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 class Component {
@@ -620,6 +689,54 @@ class Component {
         }
         return ci;
     }
+    
+    //runtime modification
+    
+    void add_port(string name, bool is_pin, Gate g = Gate.NONE) {
+        if (name in ports) {
+            throw new RuntimeException("duplicate port name");
+        }
+        ports[name] = new Port(name, true, 0);
+    }
+    
+    void add_ext_port(string name, bool is_input) {
+        if (name in ports) {
+            throw new RuntimeException("duplicate port name");
+        }
+        
+        if (is_input) {
+            ports[name] = new Port(name, true, inputs.length);
+            inputs ~= ports[name];
+            ports[name].is_input = true;
+        } else {
+            ports[name] = new Port(name, true, outputs.length);
+            outputs ~= ports[name];
+        }
+    }
+    
+    void remove_port(string name) {
+        if (name !in ports) {
+            throw new RuntimeException("no such port");
+        }
+        foreach (p; ports) {
+            foreach (con; p.outputs) {
+                if (con.port == ports[name]) {
+                    con.port = null;
+                }
+            }
+		}
+
+		if (ports[name].is_pin) {
+			ulong n = ports[name].num;
+			if (ports[name].is_input) {
+				inputs = inputs[0..n]~(n+1<inputs.length ? inputs[n..$] : []);
+			} else {
+				outputs = outputs[0..n]~(n+1<outputs.length ? outputs[n..$] : []);
+			}
+		}
+
+		ports.remove(name);
+    }
 }
 
 enum Gate {
@@ -629,6 +746,9 @@ enum Gate {
 struct Connection {
     Port port;
     ulong source, dest;
+    string toString() {
+	return "("~to!string(source)~" "~(port is null ? "<null>" : port.name)~" "~to!string(dest)~")";
+    }
 }
 
 class Port {
@@ -723,14 +843,6 @@ class ComponentInstance {
     }
     
     bool propogate() {
-        /*
-        foreach (child; children) {
-            foreach (outp; child.type.outputs) {
-                
-            }
-        }
-        */
-        
         bool change = false;
         
         foreach (child; children) {
