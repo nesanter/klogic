@@ -386,13 +386,19 @@ class Prompt : Driver {
                     writeln("no such port");
                 } else {
                     m.remove_port(views[$-1].type, commands[1]);
-					
-					m.instantiate();
-					views = [m.root_instance];
-					foreach (pp; path) {
-						views ~= views[$-1].children[pp.name].sub_instance;
-					}
+                    
+                    m.instantiate();
+                    views = [m.root_instance];
+                    foreach (pp; path) {
+                        views ~= views[$-1].children[pp.name].sub_instance;
+                    }
                 }
+            break;
+            case "connect":
+                if (commands.length == 1) {
+                    
+                }
+
             break;
             case "clear":
                 write("\x1B[2J\x1B[H");
