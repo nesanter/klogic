@@ -692,11 +692,13 @@ class Component {
     
     //runtime modification
     
-    void add_port(string name, bool is_pin, Gate g = Gate.NONE) {
+    void add_port(string name, bool is_pin, Gate g = Gate.NONE, Component c = null) {
         if (name in ports) {
             throw new RuntimeException("duplicate port name");
         }
-        ports[name] = new Port(name, true, 0);
+        ports[name] = new Port(name, is_pin, 0);
+        ports[name].gate = g;
+        ports[name].sub = c;
     }
     
     void add_ext_port(string name, bool is_input) {
@@ -718,6 +720,11 @@ class Component {
         if (name !in ports) {
             throw new RuntimeException("no such port");
         }
+
+        foreach (con; ports[name].outputs) {
+            con.port.constant_inputs[con.dest] = Status.X;
+        }
+
         foreach (p; ports) {
             foreach (con; p.outputs) {
                 if (con.port == ports[name]) {
@@ -846,10 +853,14 @@ class ComponentInstance {
         bool change = false;
         
         foreach (child; children) {
-            if (child.type.gate == Gate.SUB)
+            if (child.type.gate == Gate.SUB) {
                 if (child.sub_instance.propogate()) {
                     change = true;
                 }
+            } else if (child.type.gate == Gate.SPC && child.type.special.delay) {
+                change = true;
+            }
+
             foreach (outp; child.type.outputs) {
                 if (outp.port is null)
                     continue;
@@ -858,8 +869,7 @@ class ComponentInstance {
                     children[outp.port.name].status_in[outp.dest] = child.status_out[outp.source];
                 }
             }
-        }
-        
+        }         
         foreach (i,outp; type.outputs) {
             if (component_out[i] != children[outp.name].status_out[0]) {
                 change = true;
@@ -1070,6 +1080,11 @@ class PortInstance {
             foreach (i; 0 .. type.sub.inputs.length)
                 status_in ~= Status.X;
             sub_instance.reset();
+        } else if (type.gate == Gate.SPC) {
+            status_in = [];
+            foreach (i; 0 .. type.special.num_inputs)
+                status_in ~= Status.X;
+            type.special.reset();
         } else if (LogicMaster.gate_inputs(type.gate) == 1) {
             status_in = [Status.X];
         } else {
@@ -1086,6 +1101,8 @@ class PortInstance {
             status_out = [];
             foreach (i; 0 .. type.sub.outputs.length)
                 status_out ~= Status.X;
+        } else if (type.gate == Gate.SPC) {
+            status_out = type.special.peek();
         } else {
             status_out = [Status.X];
         }
@@ -1108,7 +1125,9 @@ interface SpecialComponent {
     static SpecialComponent create(string[] args);
     Status[] update(Status[] input);
     void reset();
+    Status[] peek();
     @property ulong num_outputs();
     @property ulong num_inputs();
     @property string name();
+    @property bool delay();
 }

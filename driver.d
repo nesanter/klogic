@@ -379,6 +379,96 @@ class Prompt : Driver {
                     }
                 }
             break;
+            case "change":
+                Gate g;
+                Component sub;
+                SpecialComponent spec;
+                ulong inp, outp;
+                if (commands.length < 3) {
+                    writeln("second and third argument must specify pin and new gate type");
+                } else if (commands[1] !in views[$-1].type.ports) {
+                    writeln("no such port");
+                } else {
+                    if (commands[2] in m.gate_names) {
+                        g = m.gate_names[commands[2]];
+                        outp = 1;
+                        inp = m.gate_inputs(g);
+                    } else if (commands[2] in m.components) {
+                        g = Gate.SUB;
+                        sub = m.components[commands[2]];
+                        outp = sub.outputs.length;
+                        inp = sub.inputs.length;
+                    } else if (commands[2] in m.special_names) {
+                        g = Gate.SPC;
+                        try {
+                            spec = m.special_names[commands[2]]((commands.length > 3 ? commands[3..$] : []));
+                        } catch (LoadingException le) {
+                            writeln(le.msg);
+                            break;
+                        }
+                        inp = spec.num_inputs;
+                        outp = spec.num_outputs;
+                    } else {
+                        writeln("no such gate/component");
+                        break;
+                    }
+                    Port p = views[$-1].type.ports[commands[1]];
+                    if (p.gate == g && p.sub == sub && p.special.name == spec.name) {
+                        writeln("no change");
+                        break;
+                    }
+                    ulong oldinp, oldoutp;
+                    if (p.gate == Gate.SUB) {
+                        oldinp = p.sub.inputs.length;
+                        oldoutp = p.sub.outputs.length;
+                    } else if (p.gate == Gate.SPC) {
+                        oldinp = p.special.num_inputs;
+                        oldoutp = p.special.num_outputs;
+                    } else {
+                        oldinp = m.gate_inputs(p.gate);
+                        oldoutp = 1;
+                    }
+                    writeln("inp = ",inp,"; outp = ",outp);
+                    if (inp > oldinp) {
+                        foreach (i; oldinp .. inp) {
+                            p.constant_inputs[i] = Status.X;
+                        }
+                    } else if (inp < oldinp) {
+                        foreach (k; p.constant_inputs.dup.byKey) {
+                            if (k >= inp)
+                                p.constant_inputs.remove(k);
+                        }
+                        foreach (port; views[$-1].type.ports) {
+                            foreach (ref con; port.outputs) {
+                                if (con.port == p && con.dest >= inp) {
+                                    writeln("nulling ",port.name);
+                                    con.port = null;
+                                    writeln(con);
+                                }
+                            }
+                        }
+                    }
+                    if (outp > oldoutp) {
+                        foreach (i; oldoutp .. outp) {
+                            p.outputs ~= Connection(null, i, 0);
+                        }
+                    } else  if (outp < oldoutp) {
+                        Connection[] keep;
+                        foreach (con; p.outputs) {
+                            if (con.source < outp) {
+                                keep ~= con;
+                            }
+                        }
+                        p.outputs = keep;
+                    }
+                    p.gate = g;
+                    p.sub = sub;
+                    p.special = spec;
+
+                    views[$-1] = views[$-1].type.instantiate();
+                    views[$-1].reset();
+               }
+            break;
             case "remove":
                 if (commands.length == 1) {
                     writeln("second argument must specify name of port");
@@ -394,13 +484,7 @@ class Prompt : Driver {
                     }
                 }
             break;
-            case "connect":
-                if (commands.length == 1) {
-                    
-                }
-
-            break;
-            case "clear":
+           case "clear":
                 write("\x1B[2J\x1B[H");
             break;
             case "auto":
