@@ -17,8 +17,6 @@ class Prompt : Driver {
     
     static LogicMaster m;
     
-    static immutable ulong default_sims = 1000;
-    
     static void reset(LogicMaster m) {
         this.m = m;
         views = [m.root_instance];

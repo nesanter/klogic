@@ -1,14 +1,33 @@
 import std.stdio;
 import std.conv;
+import std.getopt;
 
 import speccomp, driver;
 
 immutable string VERSION = "1.0";
 
-void main(string[] args) {
+ulong default_sims = 1000;
+
+int main(string[] args) {
+
+    bool batch;
+    bool abort;
+    bool verbose;
+    try {
+        getopt(args,
+                "batch|b", &batch,
+                "abort|q", &abort,
+                "verbose|v", &verbose,
+                "sims", &default_sims
+              );
+    } catch (Exception e) {
+        writeln("error parsing arguments");
+        return 1;
+    }
+
     if (args.length == 1) {
-        writeln("Syntax: logic files...");
-        return;
+        writeln("Syntax: logic [opts] files...");
+        return 1;
     }
     
     LogicMaster m = new LogicMaster;
@@ -24,22 +43,27 @@ void main(string[] args) {
             m.load_logic(f);
         } catch (LoadingException e) {
             writeln("error loading ",arg,": ",e.msg," (line ",e.line,")");
-            return;
+            return 1;
         }
     }
+
+    bool check_result = m.run_checks(verbose);
+    if (abort && check_result)
+        return 1;
     
+    if (batch)
+        return check_result ? 1 : 0;
+
     if (m.root is null) {
         writeln("error: no root declared to instantiate");
-        return;
+        return 1;
     }
     
     m.instantiate();
     
-    m.initial_commands();
-    
     m.launch!(Prompt)();
 
-    
+    return 0;
 }
 
 class LoadingException : Throwable {
@@ -64,8 +88,6 @@ class LogicMaster {
     static Status[string] constant_ports;
     static SpecialComponent function(string[]) [string] special_names;
     
-    string[][] commands;
-    
     static this() {
         seperators = [
             ' ':false, '\t':false, ',':true, ';':true, '(':true, ')':true,
@@ -89,6 +111,7 @@ class LogicMaster {
     
     Component[string] components;
     Component root;
+    Check[][string] checks;
     
     ComponentInstance root_instance;
     
@@ -111,7 +134,7 @@ class LogicMaster {
             switch (tokens[0]) {
                 case "component":
                     if (tokens.length < 4)
-                        throw new LoadingException("too few tokens in toplevel");
+                        throw new LoadingException("unexpected end of tokens in toplevel");
                     
                     if (!valid_name(tokens[1]))
                         throw new LoadingException("invalid name token "~tokens[1]~" in toplevel");
@@ -144,20 +167,17 @@ class LogicMaster {
                     tokens = tokens[3..$];
                     
                 break;
-                case "#":
-                    string[] cmds;
-                    ulong i = 1;
-                    while (tokens[i] != ";") {
-                        cmds ~= tokens[i];
-                        i++;
-                        if (i == tokens.length)
-                            throw new LoadingException("unexpected end of tokens following @");
-                    }
-                    commands ~= cmds;
-                    if (tokens.length > i+1)
-                        tokens = tokens[i+1..$];
-                    else
-                        tokens = [];
+                case "check":
+                    if (tokens.length < 4)
+                        throw new LoadingException("unexpected end of tokens in toplevel");
+                    
+                    string name = tokens[1];
+
+                    Check ch = new Check(default_sims);
+
+                    tokens = parse_check(tokens[2..$], ch, name);
+
+                    checks[name] ~= ch;
                 break;
                 default:
                     throw new LoadingException("bad token "~tokens[0]~" in toplevel");
@@ -397,28 +417,67 @@ class LogicMaster {
                 inputs[p++].outputs ~= Connection(g, 0, j);
             }
         }
-        /*
-        foreach (j,p; outputs) {
-            if (ignores.length > 0 && ignores[0] == j) {
-                g.outputs ~= Connection(null);
-                if (ignores.length == 1) {
-                    ignores = [];
-                } else {
-                    ignores = ignores[1..$];
-                }
-            } else {
-                g.outputs ~= Connection(p,j,0);
-            }
-        }
-        
-        foreach (j,p; inputs) {
-            p.outputs ~= Connection(g,0,j);
-        }
-        */
         
         c.ports[g.name] = g;
         
         return tokens;
+    }
+
+    string[] parse_check(string[] tokens, Check ch, string name) {
+        if (tokens[0] != "{")
+            throw new LoadingException("bad token in check for "~name);
+
+        tokens = tokens[1..$];
+
+        while (tokens[0] != "}") {
+           switch (tokens[0]) {
+                case "<":
+                    CheckAction act = new CheckAction(CheckActionType.INPUT);
+                    tokens = parse_checkaction(tokens[1..$], act);
+                    ch.actions ~= act;
+                    break;
+                case ">":
+                    CheckAction act = new CheckAction(CheckActionType.OUTPUT);
+                    tokens = parse_checkaction(tokens[1..$], act);
+                    ch.actions ~= act;
+                    break;
+                default:
+                    throw new LoadingException("unexpected token "~tokens[0]~" in check for "~name);
+                    break;
+            }
+            if (tokens.length == 0)
+                throw new LoadingException("unexpected end of tokens in check for "~name);
+        }
+        
+        return tokens[1..$];
+    }
+
+    string[] parse_checkaction(string[] tokens, CheckAction act) {
+        ulong i = 0;
+        while (tokens[i] != ";") {
+            switch (tokens[i]) {
+                case "X":
+                    act.status[i] = Status.X;
+                    break;
+                case "E":
+                    act.status[i] = Status.E;
+                    break;
+                case "L":
+                    act.status[i] = Status.L;
+                    break;
+                case "H":
+                    act.status[i] = Status.H;
+                    break;
+                case "_":
+                    break;
+                default:
+                    throw new LoadingException("unknown status "~tokens[i]~" in check action");
+            }
+            if (++i == tokens.length)
+                throw new LoadingException("unexpected end of tokens in check action");
+        }
+
+        return tokens[i+1..$];
     }
     
     string[] tokenize(File f) {
@@ -497,28 +556,62 @@ class LogicMaster {
             return 1;
         return 2;
     }
-    
+
     void instantiate() {
         root_instance = root.instantiate();
         root_instance.reset();
     }
-    
-    //----interactive prompt----//
-    
-    void initial_commands() {
-        Prompt.reset(this);
-        foreach (cmd; commands) {
-            Prompt.run_command(cmd);
+ 
+    //----functionality checking----//
+
+    bool run_checks(bool verbose) {
+        ulong errors, total;
+        foreach (name, checklist; checks) {
+            foreach (ch; checklist) {
+                CheckResult r = ch.check(components[name]);
+                if (r.type != CheckResultType.PASS)
+                    errors++;
+                if (verbose) {
+                    final switch (r.type) {
+                        case CheckResultType.PASS:
+                            writeln("TEST ",total," : PASS");
+                            break;
+                        case CheckResultType.UNSTABLE:
+                            writeln("TEST ",total," : UNSTABLE (line ",r.line,")");
+                            break;
+                        case CheckResultType.FAIL:
+                            string s, s2;
+                            foreach (i; 0 .. r.actual.length) {
+                                if (i in r.expected)
+                                    s ~= " "~to!string(r.expected[i]);
+                                else
+                                    s ~= " _";
+                            }
+                            foreach (stat; r.actual) {
+                                s2 ~= " "~to!string(stat);
+                            }
+                            writeln("TEST ",total, " : FAIL (expected",s,", got",s2,"; line ",r.line,")");
+                            break;
+                    }
+                }
+                total++;
+            }
         }
+        if (verbose && errors > 0)
+            writeln("Warning: ",errors,"/",total," checks failed");
+        return errors > 0;
     }
     
-    void launch(T : Driver)() {
+   
+    //----interactive prompt----//
+    
+   void launch(T : Driver)() {
         T.reset(this);
         T.run();
     }
     
     //----simulation----//
-    ulong simulate(ComponentInstance main, ulong sims, out bool stable) {
+    static long simulate(ComponentInstance main, ulong sims, out bool stable) {
         ulong i = 0;
         while ((sims == 0 || sims-- > 1)) {
             if (!step(main)) {
@@ -530,9 +623,9 @@ class LogicMaster {
         return i;
     }
     
-    bool step(ComponentInstance main) {
+    static bool step(ComponentInstance main) {
         main.recalculate();
-        return root_instance.propogate();
+        return main.propogate();
     }
     
     //----runtime modification----//
@@ -869,7 +962,7 @@ class ComponentInstance {
                     children[outp.port.name].status_in[outp.dest] = child.status_out[outp.source];
                 }
             }
-        }         
+        }
         foreach (i,outp; type.outputs) {
             if (component_out[i] != children[outp.name].status_out[0]) {
                 change = true;
@@ -1118,6 +1211,58 @@ class PortInstance {
         } else {
             status_out[0] = gate_lookup[type.gate].get(status_in,Status.E);
         }
+    }
+}
+
+class Check {
+    CheckAction[] actions;
+    ulong sims;
+
+    this(ulong sims) {
+        this.sims = sims;
+    }
+
+    CheckResult check(Component c) {
+        ComponentInstance root = c.instantiate();
+        root.reset();
+        foreach (ln,act; actions) {
+            if (act.type == CheckActionType.INPUT) {
+                foreach (i,ref cin; root.component_in) {
+                    if (i in act.status)
+                        cin = act.status[i];
+                }
+                bool stable;
+                LogicMaster.simulate(root, sims, stable);
+                if (!stable)
+                    return CheckResult(CheckResultType.UNSTABLE, ln);
+            } else {
+                foreach (i, cin; root.component_out) {
+                    if (i in act.status && cin != act.status[i])
+                        return CheckResult(CheckResultType.FAIL, ln, act.status, root.component_out);
+                }
+            }
+        }
+        return CheckResult(CheckResultType.PASS);
+    }
+}
+
+enum CheckResultType { PASS, FAIL, UNSTABLE }
+
+struct CheckResult {
+    CheckResultType type;
+    ulong line;
+    Status[ulong] expected;
+    Status[] actual;
+}
+
+enum CheckActionType { INPUT, OUTPUT }
+
+class CheckAction {
+    CheckActionType type;
+    Status[ulong] status;
+
+    this(CheckActionType type) {
+        this.type = type;
     }
 }
 
