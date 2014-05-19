@@ -558,7 +558,7 @@ class LogicMaster {
     }
 
     void instantiate() {
-        root_instance = root.instantiate();
+        root_instance = root.instantiate("root");
         root_instance.reset();
     }
  
@@ -611,10 +611,10 @@ class LogicMaster {
     }
     
     //----simulation----//
-    static long simulate(ComponentInstance main, ulong sims, out bool stable) {
+    static long simulate(ComponentInstance main, ulong sims, out bool stable, bool verbose) {
         ulong i = 0;
         while ((sims == 0 || sims-- > 1)) {
-            if (!step(main)) {
+            if (!step(main, verbose)) {
                 stable = true;
                 break;
             }
@@ -623,9 +623,9 @@ class LogicMaster {
         return i;
     }
     
-    static bool step(ComponentInstance main) {
+    static bool step(ComponentInstance main, bool verbose) {
         main.recalculate();
-        return main.propogate();
+        return main.propogate(verbose);
     }
     
     //----runtime modification----//
@@ -700,10 +700,11 @@ class Component {
     
     Port[] inputs;
     Port[] outputs;
+   
     this(string name) {
         this.name = name;
     }
-    
+
     void print() {
         writeln("component: ",name);
         writeln("  inputs: ",inputs);
@@ -770,14 +771,14 @@ class Component {
         
     }
     
-    ComponentInstance instantiate() {
-        auto ci = new ComponentInstance;
+    ComponentInstance instantiate(string name) {
+        auto ci = new ComponentInstance(name);
         ci.type = this;
         foreach (k,v; ports) {
             ci.children[k] = new PortInstance;
             ci.children[k].type = v;
             if (v.gate == Gate.SUB) {
-                ci.children[k].sub_instance = v.sub.instantiate();
+                ci.children[k].sub_instance = v.sub.instantiate(to!string(ci)~"/"~k);
             }
         }
         return ci;
@@ -853,7 +854,7 @@ struct Connection {
 
 class Port {
     string name;
-    bool is_pin, internal, is_input;
+    bool is_pin, internal, is_input, is_bus;
     Gate gate;
     Component sub;
     SpecialComponent special;
@@ -862,9 +863,6 @@ class Port {
     Status[ulong] constant_inputs;
     
     Connection[] outputs;
-    
-    //Port[][] outputs;
-    
     
     this(string name, bool is_pin, ulong num) {
         this.name = name;
@@ -894,7 +892,17 @@ class ComponentInstance {
     
     Status[] component_in;
     Status[] component_out;
-    
+
+    string name;
+
+    this(string name) {
+        this.name = name;
+    }
+
+    override string toString() {
+        return name~"_"~type.name;
+    }
+
     void view() {
         writeln("viewing: ", type.name);
         foreach (portname; children.keys.sort) {
@@ -937,39 +945,95 @@ class ComponentInstance {
     void recalculate() {
         foreach (i,inp; type.inputs) {
             children[inp.name].status_in = [component_in[i]];
+            children[inp.name].status_in_temp = [component_in[i]];
         }
         foreach (child; children)
             child.recalculate();
     }
     
-    bool propogate() {
+    bool propogate(bool verbose) {
         bool change = false;
-        
+
         foreach (child; children) {
             if (child.type.gate == Gate.SUB) {
-                if (child.sub_instance.propogate()) {
+                if (child.sub_instance.propogate(verbose)) {
                     change = true;
                 }
             } else if (child.type.gate == Gate.SPC && child.type.special.delay) {
+                if (verbose)
+                    writeln(child.type.name, " (waiting)");
                 change = true;
             }
 
             foreach (outp; child.type.outputs) {
                 if (outp.port is null)
                     continue;
-                if (child.status_out[outp.source] != children[outp.port.name].status_in[outp.dest]) {
-                    change = true;
-                    children[outp.port.name].status_in[outp.dest] = child.status_out[outp.source];
+                if (child.status_out[outp.source] == Status.X)
+                    continue;
+                /*
+                if (children[outp.port.name].set[outp.dest]) {
+                    if (children[outp.port.name].status_in_temp[outp.dest] != child.status_out[outp.source]) {
+                        if (children[outp.port.name].status_in_temp[outp.dest] != Status.E) {
+                            if (verbose)
+                                writeln("{",this,"} ", child.type, "[", outp.source, "]->", children[outp.port.name].type, "[", outp.dest, "] : now E (inconsistant)");
+                            children[outp.port.name].status_in[outp.dest] = Status.E;
+                        }
+                    }
+                } else {
+                    children[outp.port.name].set[outp.dest] = true;
+                    if (child.status_out[outp.source] != children[outp.port.name].status_in_temp[outp.dest]) {
+                        if (verbose)
+                            writeln("{",this,"} ",child.type, "[",outp.source,"]->", children[outp.port.name].type, "[", outp.dest,"] : now ",child.status_out[outp.source]);
+                        children[outp.port.name].status_in_temp[outp.dest] = child.status_out[outp.source];
+                    }
+                }
+                */
+                if (child.status_out[outp.source] != children[outp.port.name].status_in_temp[outp.dest]) {
+                    if (children[outp.port.name].status_in_temp[outp.dest] != Status.X) {
+                        children[outp.port.name].status_in_temp[outp.dest] = Status.E;
+                        if (verbose)
+                            writeln("{", this, "} ", child.type, "[", outp.source, "]->", children[outp.port.name].type, "[", outp.dest, "] : inconsistent");
+                    } else {
+                        children[outp.port.name].status_in_temp[outp.dest] = child.status_out[outp.source];
+                    }
                 }
             }
         }
         foreach (i,outp; type.outputs) {
             if (component_out[i] != children[outp.name].status_out[0]) {
                 change = true;
+                if (verbose)
+                    writeln(type.name,"[",i,"] (now ",children[outp.name].status_out[0], ")");
                 component_out[i] = children[outp.name].status_out[0];
             }
         }
         
+        foreach (child; children) {
+            /*
+            foreach (i,ref s; child.set) {
+                if (i in child.type.constant_inputs)
+                    continue;
+                if (s)
+                    s = false;
+                else if (child.status_in_temp[i] != Status.X) {
+                    child.status_in_temp[s] = Status.X;
+                    if (verbose)
+                        writeln(child,"[",i,"] (unstable -> X)");
+                    change = true;
+                }
+            }
+            */
+            foreach (i,ref s; child.status_in_temp) {
+                if (child.status_in[i] != s) {
+                    change = true;
+                    if (verbose)
+                        writeln("{", this, "}", child.type, "[", i, "] : ", child.status_in[i], " -> ", s);
+                    child.status_in[i] = s;
+                }
+                s = Status.X;
+            }
+        }
+
         return change;
     }
 }
@@ -1162,7 +1226,7 @@ class PortInstance {
                  
     }
     
-    Status[] status_in;
+    Status[] status_in, status_in_temp;
     Status[] status_out;
     
     ComponentInstance sub_instance;
@@ -1188,6 +1252,8 @@ class PortInstance {
             status_in[pos] = s;
         }
         
+        status_in_temp = status_in.dup;
+
         //foreach (k; status_out.dup.byKey)
         //    status_out.remove(k);
         if (type.gate == Gate.SUB) {
@@ -1223,7 +1289,7 @@ class Check {
     }
 
     CheckResult check(Component c) {
-        ComponentInstance root = c.instantiate();
+        ComponentInstance root = c.instantiate("root");
         root.reset();
         foreach (ln,act; actions) {
             if (act.type == CheckActionType.INPUT) {
@@ -1232,7 +1298,7 @@ class Check {
                         cin = act.status[i];
                 }
                 bool stable;
-                LogicMaster.simulate(root, sims, stable);
+                LogicMaster.simulate(root, sims, stable, false);
                 if (!stable)
                     return CheckResult(CheckResultType.UNSTABLE, ln);
             } else {

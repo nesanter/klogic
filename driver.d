@@ -75,7 +75,23 @@ class Prompt : Driver {
                         break;
                     }
                 }
-                sim(sims);
+                sim(sims, false);
+            break;
+            case "runv":
+                ulong sims;
+                if (commands.length == 1)
+                    sims = default_sims;
+                else {
+                    try {
+                        sims = to!ulong(commands[1]);
+                        if (sims > 0)
+                            sims++;
+                    } catch (ConvException ce) {
+                        writeln("number of trials must be an unsigned integer");
+                        break;
+                    }
+                }
+                sim(sims, true);
             break;
             case "S":
             case "show":
@@ -180,7 +196,7 @@ class Prompt : Driver {
                             break; 
                         }
                         if (autorun) {
-                            sim(default_sims);
+                            sim(default_sims, false);
                         }
                     }
                 }
@@ -318,7 +334,7 @@ class Prompt : Driver {
                         n >>= 1;
                     }
                     if (autorun) {
-                        sim(default_sims);
+                        sim(default_sims, false);
                     }
                 }
             break;
@@ -463,7 +479,7 @@ class Prompt : Driver {
                     p.sub = sub;
                     p.special = spec;
 
-                    views[$-1] = views[$-1].type.instantiate();
+                    views[$-1] = views[$-1].type.instantiate("root");
                     views[$-1].reset();
                }
             break;
@@ -493,7 +509,7 @@ class Prompt : Driver {
                         writeln("off");
                 } else if (commands[1] == "on") {
                     autorun = true;
-                    sim(default_sims);
+                    sim(default_sims, false);
                 } else if (commands[1] == "off") {
                     autorun = false;
                 } else {
@@ -531,9 +547,9 @@ class Prompt : Driver {
         return false;
     }
     
-    static void sim(ulong sims) {
+    static void sim(ulong sims, bool verbose) {
         bool stable;
-        ulong runs = m.simulate(m.root_instance, sims, stable);
+        ulong runs = m.simulate(m.root_instance, sims, stable, verbose);
         if (stable)
             writeln("simulation stable after ",runs," rounds");
         else
