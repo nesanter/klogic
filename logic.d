@@ -129,6 +129,8 @@ class LogicMaster {
     void parse_toplevel(string[] tokens) {
         
         string root_name;
+        Status[string] inits;
+        ulong[string] inits_n;
         
         while (tokens.length > 0) {
             switch (tokens[0]) {
@@ -167,6 +169,28 @@ class LogicMaster {
                     tokens = tokens[3..$];
                     
                 break;
+                case "init":
+                    if (tokens.length < 4)
+                        throw new LoadingException("unexpected end of tokens in toplevel");
+
+                    if (tokens[1] in inits || tokens[1] in inits_n)
+                        throw new LoadingException("duplicate port initializer "~tokens[1]~" in toplevel");
+                    
+                    if (tokens[2] in constant_ports)
+                        inits[tokens[1]] = constant_ports[tokens[2]];
+                    else {
+                        try {
+                            inits_n[tokens[1]] = to!ulong(tokens[2]);
+                        } catch (ConvException ce) {
+                            throw new LoadingException("unknown initial status "~tokens[2]~" for port "~tokens[1]~" in toplevel");
+                        }
+                    }
+
+                    if (tokens[3] != ";")
+                        throw new LoadingException("initializer without ; in toplevel");
+
+                    tokens = tokens[4..$];
+               break;
                 case "check":
                     if (tokens.length < 4)
                         throw new LoadingException("unexpected end of tokens in toplevel");
@@ -191,6 +215,22 @@ class LogicMaster {
             throw new LoadingException("multiple files declare root in toplevel");
             
         root = components[root_name];
+        
+        foreach (p,s; inits) {
+            if (p !in root.ports)
+                throw new LoadingException("initializer for unknown port "~p~"in toplevel");
+            root.initial[root.ports[p].num] = s;
+        }
+        foreach (g,n; inits_n) {
+            if (g !in root.groups)
+                throw new LoadingException("integer initializer for unknown group "~g~" in toplevel");
+            if (n >= (1 << root.groups[g].length))
+                throw new LoadingException("integer initializer too large for group "~g~" in toplevel");
+            foreach (p; root.groups[g]) {
+                root.initial[p.num] = (n & 1) ? Status.H : Status.L;
+                n >>= 1;
+            }
+        }
         
     }
     
@@ -700,7 +740,9 @@ class Component {
     
     Port[] inputs;
     Port[] outputs;
-   
+
+    Status[ulong] initial;
+
     this(string name) {
         this.name = name;
     }
@@ -863,7 +905,7 @@ class Port {
     Status[ulong] constant_inputs;
     
     Connection[] outputs;
-    
+
     this(string name, bool is_pin, ulong num) {
         this.name = name;
         this.is_pin = is_pin;
@@ -930,8 +972,8 @@ class ComponentInstance {
     
     void reset() {
         component_in = [];
-        foreach (i; 0 .. type.inputs.length) {
-            component_in ~= Status.X;
+        foreach (i; 0 .. type.outputs.length) {
+            component_in ~= type.initial.get(i,Status.X);
         }
         component_out = [];
         foreach (i; 0 .. type.outputs.length) {
@@ -1030,7 +1072,10 @@ class ComponentInstance {
                         writeln("{", this, "}", child.type, "[", i, "] : ", child.status_in[i], " -> ", s);
                     child.status_in[i] = s;
                 }
-                s = Status.X;
+                if (i in child.type.constant_inputs)
+                    s = child.type.constant_inputs[i];
+                else
+                    s = Status.X;
             }
         }
 
@@ -1247,12 +1292,13 @@ class PortInstance {
         } else {
             status_in = [Status.X, Status.X];
         }
-        
+
+        status_in_temp = status_in.dup;       
+
         foreach (pos,s; type.constant_inputs) {
             status_in[pos] = s;
+            status_in_temp[pos] = s;
         }
-        
-        status_in_temp = status_in.dup;
 
         //foreach (k; status_out.dup.byKey)
         //    status_out.remove(k);

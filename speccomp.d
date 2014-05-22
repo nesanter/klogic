@@ -3,6 +3,21 @@ import std.conv;
 
 import logic;
 
+/*
+    Pinout:
+    0 < CLK
+    1 < WRITE
+    2..2+addrwidth < ADDRESS;
+    2+width < DATA_IN;
+    0..width > DATA_OUT;
+
+    Arguments:
+    data width (1-64)
+    address width (1-24)
+    initial data file
+    delay length
+    
+*/
 class SCMemory : SpecialComponent {
     static SpecialComponent create(string[] args) {
         return new SCMemory(args);
@@ -16,10 +31,12 @@ class SCMemory : SpecialComponent {
     Status[] status;
 
     ulong[] payload;
+    ulong[] initial;
 
     ulong delaycount;
 
     this(string[] args) {
+        string initfname;
         if (args.length > 0) {
             try {
                 width = to!ulong(args[0]);
@@ -29,33 +46,79 @@ class SCMemory : SpecialComponent {
         }
         if (args.length > 1) {
             try {
-                size = to!ulong(args[1]);
+                addrwidth = to!ulong(args[1]);
             } catch (ConvException ce) {
                 throw new LoadingException("second argument to special component memory must be unsigned integer");
             }
-            addrwidth = 1;
-            while ((1 << addrwidth) < size)
-                addrwidth++;
         } else {
-            size = (1 << width);
-            addrwidth = width;
+            addrwidth = width > 24 ? 24 : width;
         }
         if (args.length > 2) {
+            initfname = args[2];
+        }
+        if (args.length > 3) {
             try {
-                delaylength = to!ulong(args[2]);
+                delaylength = to!ulong(args[3]);
             } catch (ConvException ce) {
-                throw new LoadingException("third argument to special component memory must be unsigned integer");
+                throw new LoadingException("fourth argument to special component memory must be unsigned integer");
             }
         }
         if (width > 64)
-            throw new LoadingException("first argument to special component memory must not exceed 64");
+            throw new LoadingException("first argument to special component memory must be in the range [1,64]");
+        if (addrwidth > 24)
+            throw new LoadingException("second argument to special component memory must be in the range [1,24]");
+        
+        size = 1 << addrwidth;
 
         payload = new ulong[size];
         status = new Status[num_outputs];
+
+        if (initfname != "") {
+            File f;
+            try {
+                f = File(initfname,"r");
+            } catch (Exception e) {
+                throw new LoadingException("cannot open initial file for component memory");
+            }
+            foreach (line; f.byLine) {
+                string s;
+                foreach (ch; line) {
+                    if (ch == ' ') {
+                        if (s.length > 0) {
+                            try {
+                                initial ~= to!ulong(s);
+                            } catch (ConvException ce) {
+                                throw new LoadingException("encountered bad value "~s~" in initial file for component memory");
+                            }
+                            if (initial[$-1] > (1 << width)) {
+                                throw new LoadingException("value "~s~" in initial file is too large for component memory");
+                            }
+                        }
+                        s = "";
+                    } else {
+                        s ~= ch;
+                    }
+                }
+                try {
+                    initial ~= to!ulong(s);
+                } catch (ConvException ce) {
+                    throw new LoadingException("encountered bad value "~s~" in initial file for component memory");
+                }
+                if (initial[$-1] > (1 << width)) {
+                    throw new LoadingException("value "~s~" in initial file is too large for component memory");
+                }
+                s = "";
+            }
+        }
+
+        foreach (i,v; initial)
+            payload[i] = v;
     }
 
     void reset() {
-        payload = new ulong[size];
+        payload = new ulong[](size);
+        foreach (i,v; initial)
+            payload[i] = v;
         delaycount = 0;
     }
 
@@ -108,14 +171,15 @@ class SCMemory : SpecialComponent {
                                     dat |= (1 << n);
                                 }
                             }
-                            if (err) {
+                            if (err || addr > payload.length) {
                                 foreach (n; 0 .. width)
                                     status[n] = Status.E;
                                 delaycount = 0;
                                 return status;
                             }
+                            payload[addr] = dat;
                         }
-                        if (addr > payload.length) {
+                        if (addr >= payload.length) {
                             foreach (n; 0 .. width)
                                 status[n] = Status.E;
                             delaycount = 0;
