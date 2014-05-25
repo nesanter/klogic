@@ -7,6 +7,7 @@ import speccomp, driver;
 immutable string VERSION = "1.0";
 
 ulong default_sims = 1000;
+bool warnings;
 
 int main(string[] args) {
 
@@ -18,10 +19,11 @@ int main(string[] args) {
                 "batch|b", &batch,
                 "abort|q", &abort,
                 "verbose|v", &verbose,
+                "warn|w", &warnings,
                 "sims", &default_sims
               );
     } catch (Exception e) {
-        writeln("error parsing arguments");
+        warn("error parsing arguments");
         return 1;
     }
 
@@ -36,13 +38,13 @@ int main(string[] args) {
         try {
             f = File(arg, "r");
         } catch (Exception e) {
-            writeln("cannot open file ",arg);
+            warn("cannot open file ",arg);
             continue;
         }
         try {
             m.load_logic(f);
         } catch (LoadingException e) {
-            writeln("error loading ",arg,": ",e.msg," (line ",e.line,")");
+            warn("error loading ",arg,": ",e.msg," (line ",e.line,")");
             return 1;
         }
     }
@@ -55,7 +57,7 @@ int main(string[] args) {
         return check_result ? 1 : 0;
 
     if (m.root is null) {
-        writeln("error: no root declared to instantiate");
+        warn("error: no root declared to instantiate");
         return 1;
     }
     
@@ -108,13 +110,13 @@ class LogicMaster {
             "%mem":&SCMemory.create
         ];
     }
-    
+
     Component[string] components;
     Component root;
     Check[][string] checks;
     
     ComponentInstance root_instance;
-    
+   
     //----parser----//
     
     bool load_logic(File f) {
@@ -773,6 +775,13 @@ class Component {
                     inputs[con.port] = [Connection(p, con.source, con.dest)];
             }
         }
+
+        if (warnings) {
+            foreach (p; ports) {
+                if (p.internal && p !in inputs)
+                    warn("warning: dangling internal port ",p.name, " in ",name);
+            }
+        }
         
         foreach (n,p; ports.dup) {
             if (p in inputs) {
@@ -798,8 +807,9 @@ class Component {
                     break;
                 }
             }
-            if (rem)
+            if (rem) {
                 groups.remove(n);
+            }
         }
         
         foreach (p; ports) {
@@ -972,7 +982,7 @@ class ComponentInstance {
     
     void reset() {
         component_in = [];
-        foreach (i; 0 .. type.outputs.length) {
+        foreach (i; 0 .. type.inputs.length) {
             component_in ~= type.initial.get(i,Status.X);
         }
         component_out = [];
@@ -1387,4 +1397,8 @@ interface SpecialComponent {
     @property ulong num_inputs();
     @property string name();
     @property bool delay();
+}
+
+void warn(S...)(S msg) {
+    stderr.writeln(msg);
 }

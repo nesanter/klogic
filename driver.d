@@ -1,7 +1,7 @@
 import std.stdio;
 import std.conv;
 
-import logic;
+import logic, dump;
 
 interface Driver {
     static void run();
@@ -212,6 +212,8 @@ class Prompt : Driver {
                         foreach (name,g; views[$-1].type.groups) {
                             if (g[0].is_input)
                                 write("  < ",name, ": ");
+                            else if (g[0].internal)
+                                continue;
                             else
                                 write("  > ",name, ": ");
                             foreach (p; g) {
@@ -515,6 +517,9 @@ class Prompt : Driver {
                 } else {
                     writeln("second argument must be \"on\" or \"off\"");
                 }
+            break;
+            case "dump":
+                dump_start(File("dump.dot","w"),m.root_instance,5);
             break;
             case "help":
                 writeln("valid commands:");

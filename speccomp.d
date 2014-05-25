@@ -86,7 +86,7 @@ class SCMemory : SpecialComponent {
                     if (ch == ' ') {
                         if (s.length > 0) {
                             try {
-                                initial ~= to!ulong(s);
+                                initial ~= from_hex(s);
                             } catch (ConvException ce) {
                                 throw new LoadingException("encountered bad value "~s~" in initial file for component memory");
                             }
@@ -100,7 +100,7 @@ class SCMemory : SpecialComponent {
                     }
                 }
                 try {
-                    initial ~= to!ulong(s);
+                    initial ~= from_hex(s);
                 } catch (ConvException ce) {
                     throw new LoadingException("encountered bad value "~s~" in initial file for component memory");
                 }
@@ -210,3 +210,65 @@ class SCMemory : SpecialComponent {
         return delaycount > 0;
     }
 }
+
+
+ulong from_hex(string s) {
+    ulong n;
+    foreach (ch; s) {
+        n <<= 4;
+        switch (ch) {
+            case '0':
+                break;
+            case '1':
+                n |= 1;
+                break;
+            case '2':
+                n |= 2;
+                break;
+            case '3':
+                n |= 3;
+                break;
+            case '4':
+                n |= 4;
+                break;
+            case '5':
+                n |= 5;
+                break;
+            case '6':
+                n |= 6;
+                break;
+            case '7':
+                n |= 7;
+                break;
+            case '8':
+                n |= 8;
+                break;
+            case '9':
+                n |= 9;
+                break;
+            case 'A':
+                n |= 10;
+                break;
+            case 'B':
+                n |= 11;
+                break;
+            case 'C':
+                n |= 12;
+                break;
+            case 'D':
+                n |= 13;
+                break;
+            case 'E':
+                n |= 14;
+                break;
+            case 'F':
+                n |= 15;
+                break;
+            default:
+                throw new ConvException("");
+        }
+    }
+    return n;
+}
+
+
