@@ -3,6 +3,55 @@ import std.conv;
 
 import logic;
 
+class SCFlipFlop : SpecialComponent {
+    static SpecialComponent create(string[] args) {
+        return new SCFlipFlop(args);
+    }
+
+    Status clk, d;
+
+    this(string[] args) {
+        if (args.length != 0) {
+            throw new LoadingException("flip flop component has no arguments");
+        }
+    }
+
+    void reset() {
+        clk = Status.X;
+        d = Status.X;
+    }
+
+    Status[] peek() {
+        return [d];
+    }
+
+    Status[] update(Status[] input) {
+        if ((input[0] == Status.H && clk == Status.L)) {
+            d = input[1];
+        } else if (input[0] == Status.E) {
+            d = Status.E;
+        }
+        clk = input[0];
+        return [d];
+    }
+
+    @property ulong num_outputs() {
+        return 1;
+    }
+    
+    @property ulong num_inputs() {
+        return 2;
+    }
+    
+    @property string name() {
+        return "%ff";
+    }
+
+    @property bool delay() {
+        return false;
+    }
+}
+
 /*
     Pinout:
     0 < CLK

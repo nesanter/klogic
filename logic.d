@@ -107,7 +107,8 @@ class LogicMaster {
             "_L":Status.L, "_H":Status.H
         ];
         special_names = [
-            "%mem":&SCMemory.create
+            "%mem":&SCMemory.create,
+            "%ff":&SCFlipFlop.create
         ];
     }
 
@@ -639,7 +640,7 @@ class LogicMaster {
                 total++;
             }
         }
-        if (verbose && errors > 0)
+        if (errors > 0)
             writeln("Warning: ",errors,"/",total," checks failed");
         return errors > 0;
     }
