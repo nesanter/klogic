@@ -24,7 +24,13 @@ void dump_ci(File f, ComponentInstance ci, ulong max_depth) {
             dump_ci(f,child.sub_instance, max_depth-1);
             f.writeln("}");
         } else {
-            f.writeln(unique_ids[child], " [label=\"",child.type,"\"];");
+            if (child.type.is_input) {
+                f.writeln(unique_ids[child], " [label=\"",child.type,"\",shape=\"triangle\"];");
+            } else if (child.type.is_output) {
+                f.writeln(unique_ids[child], " [label=\"",child.type,"\",shape=\"rectangle\"];");
+            } else {
+                f.writeln(unique_ids[child], " [label=\"",child.type,"\"];");
+            }
         }
     }
     foreach (child; ci.children) {

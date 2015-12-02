@@ -4,7 +4,7 @@ import std.getopt;
 
 import speccomp, driver;
 
-immutable string VERSION = "1.0";
+immutable string VERSION = "1.1";
 
 ulong default_sims = 1000;
 bool warnings;
@@ -14,17 +14,31 @@ int main(string[] args) {
     bool batch;
     bool abort;
     bool verbose;
+    bool show_help;
     try {
         getopt(args,
                 "batch|b", &batch,
                 "abort|q", &abort,
                 "verbose|v", &verbose,
                 "warn|w", &warnings,
-                "sims", &default_sims
+                "sims", &default_sims,
+                "help|h", &show_help
               );
     } catch (Exception e) {
         warn("error parsing arguments");
         return 1;
+    }
+
+    if (show_help) {
+        writeln("Syntax: logic [opts] files...");
+        writeln("Options:");
+        writeln("  --batch -b        stop after running checks");
+        writeln("  --abort -a        stop if any checks fail");
+        writeln("  --verbose -v      be more verbose");
+        writeln("  --warn -w         enable warnings");
+        writeln("  --sims            change default step maximum");
+        writeln("  --help -h         show this help");
+        return 0;
     }
 
     if (args.length == 1) {
@@ -272,6 +286,10 @@ class LogicMaster {
         
         foreach (p; c.inputs)
             p.is_input = true;
+
+        foreach (p; c.outputs)
+            p.is_output = true;
+
         c.simplify();
         
         return tokens[1..$];
@@ -907,7 +925,7 @@ struct Connection {
 
 class Port {
     string name;
-    bool is_pin, internal, is_input, is_bus;
+    bool is_pin, internal, is_input, is_output, is_bus;
     Gate gate;
     Component sub;
     SpecialComponent special;

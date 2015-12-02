@@ -1,0 +1,12 @@
+component nand {
+    < a, b;
+    > f;
+
+    . x0, x1;
+
+    + _L, a [*] x0;
+    + x0, b [*] x1;
+    + x1 [-H] f;
+}
+
+root nand;
