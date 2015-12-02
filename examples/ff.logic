@@ -1,0 +1,14 @@
+check testff {
+    > X;
+    < L L;
+    < H L;
+    > L;
+}
+
+component testff {
+    < clk, din;
+    > dout;
+    + clk, din [%ff] dout;
+}
+
+root testff;
